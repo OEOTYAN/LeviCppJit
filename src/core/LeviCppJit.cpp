@@ -19,22 +19,31 @@ struct LeviCppJit::Impl {
     CxxCompileLayer cxxCompileLayer;
 };
 
-LeviCppJit::~LeviCppJit() { mSelf.getLogger().info("unloading..."); }
+LeviCppJit::LeviCppJit()  = default;
+LeviCppJit::~LeviCppJit() = default;
 
-static std::unique_ptr<LeviCppJit> plugin{};
-
-LeviCppJit& LeviCppJit::getInstance() { return *plugin; }
-
-LeviCppJit::LeviCppJit(ll::plugin::NativePlugin& self)
-: mSelf(self),
-  mImpl(std::make_unique<Impl>()) {
-    mSelf.getLogger().info("loading...");
+LeviCppJit& LeviCppJit::getInstance() {
+    static LeviCppJit instance;
+    return instance;
 }
 
-ll::plugin::NativePlugin& LeviCppJit::getSelf() const { return mSelf; }
+ll::plugin::NativePlugin& LeviCppJit::getSelf() const { return *mSelf; }
+
+bool LeviCppJit::load(ll::plugin::NativePlugin& self) {
+    mSelf = std::addressof(self);
+    getSelf().getLogger().info("loading...");
+    mImpl = std::make_unique<Impl>();
+    return true;
+}
+bool LeviCppJit::unload() {
+    getSelf().getLogger().info("unloading...");
+    mImpl.reset();
+    mSelf = nullptr;
+    return true;
+}
 
 bool LeviCppJit::enable() {
-    mSelf.getLogger().info("enabling...");
+    getSelf().getLogger().info("enabling...");
 
     auto tmodule = mImpl->cxxCompileLayer.compileRaw(R"(
 
@@ -135,25 +144,27 @@ ll::service::getLevel()->getLevelName().c_str());
 }
 
 bool LeviCppJit::disable() {
-    mSelf.getLogger().info("disabling...");
+    getSelf().getLogger().info("disabling...");
 
     return true;
 }
 
 extern "C" {
 _declspec(dllexport) bool ll_plugin_load(ll::plugin::NativePlugin& self) {
-    plugin = std::make_unique<LeviCppJit>(self);
-    return true;
+    return LeviCppJit::getInstance().load(self);
 }
 
 _declspec(dllexport) bool ll_plugin_unload(ll::plugin::NativePlugin&) {
-    plugin.reset();
-    return true;
+    return LeviCppJit::getInstance().unload();
 }
 
-_declspec(dllexport) bool ll_plugin_enable(ll::plugin::NativePlugin&) { return plugin->enable(); }
+_declspec(dllexport) bool ll_plugin_enable(ll::plugin::NativePlugin&) {
+    return LeviCppJit::getInstance().enable();
+}
 
-_declspec(dllexport) bool ll_plugin_disable(ll::plugin::NativePlugin&) { return plugin->disable(); }
+_declspec(dllexport) bool ll_plugin_disable(ll::plugin::NativePlugin&) {
+    return LeviCppJit::getInstance().disable();
+}
 }
 
 } // namespace lcj

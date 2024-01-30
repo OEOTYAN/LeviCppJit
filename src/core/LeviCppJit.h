@@ -6,7 +6,7 @@ namespace lcj {
 
 class LeviCppJit {
 public:
-    explicit LeviCppJit(ll::plugin::NativePlugin& self);
+     LeviCppJit();
 
     LeviCppJit(LeviCppJit&&)                 = delete;
     LeviCppJit(const LeviCppJit&)            = delete;
@@ -19,12 +19,16 @@ public:
 
     [[nodiscard]] ll::plugin::NativePlugin& getSelf() const;
 
+    bool load(ll::plugin::NativePlugin&);
+
     bool enable();
 
     bool disable();
 
+    bool unload();
+
 private:
-    ll::plugin::NativePlugin& mSelf;
+    ll::plugin::NativePlugin* mSelf;
     struct Impl;
     std::unique_ptr<Impl> mImpl;
 };
