@@ -28,7 +28,7 @@ public:
     bool unload();
 
 private:
-    ll::plugin::NativePlugin* mSelf;
+    ll::plugin::NativePlugin* mSelf{};
     struct Impl;
     std::unique_ptr<Impl> mImpl;
 };

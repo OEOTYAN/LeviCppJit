@@ -2,6 +2,7 @@
 
 #include "core/LeviCppJit.h"
 
+#include <clang/Basic/DiagnosticSema.h>
 #include <clang/Basic/SourceManager.h>
 #include <clang/CodeGen/CodeGenAction.h>
 #include <clang/CodeGen/ModuleBuilder.h>
@@ -33,13 +34,13 @@ public:
 
         switch (DiagLevel) {
         case clang::DiagnosticsEngine::Level::Ignored:
-            logger.debug("<Ignored> {}{}", s, std::string_view{sd.getMessage()});
+            logger.debug("[Ignored] {}{}", s, std::string_view{sd.getMessage()});
             return;
         case clang::DiagnosticsEngine::Level::Note:
-            logger.info("<Note> {}{}", s, std::string_view{sd.getMessage()});
+            logger.info("[Note] {}{}", s, std::string_view{sd.getMessage()});
             return;
         case clang::DiagnosticsEngine::Level::Remark:
-            logger.info("<Remark> {}{}", s, std::string_view{sd.getMessage()});
+            logger.info("[Remark] {}{}", s, std::string_view{sd.getMessage()});
             return;
         case clang::DiagnosticsEngine::Level::Warning:
             logger.warn("{}{}", s, std::string_view{sd.getMessage()});
@@ -50,6 +51,8 @@ public:
         case clang::DiagnosticsEngine::Level::Fatal:
             logger.fatal("{}{}", s, std::string_view{sd.getMessage()});
             return;
+        default:
+            std::unreachable();
         }
     }
 };
@@ -132,11 +135,16 @@ CxxCompileLayer::CxxCompileLayer() : impl(std::make_unique<Impl>()) {
 
     langOpts.MSCompatibilityVersion = 193833130;
 
+    impl->diagnosticsEngine->setSeverity(
+        clang::diag::warn_unhandled_ms_attribute_ignored,
+        clang::diag::Severity::Ignored,
+        {}
+    );
+
     auto& preprocessorOpts = compilerInvocation.getPreprocessorOpts();
 
     preprocessorOpts.addMacroDef("_AMD64_");
     preprocessorOpts.addMacroDef("_CRT_SECURE_NO_WARNINGS");
-    preprocessorOpts.addMacroDef("_ENABLE_CONSTEXPR_MUTEX_CONSTRUCTOR");
     preprocessorOpts.addMacroDef("NOMINMAX");
     preprocessorOpts.addMacroDef("UNICODE");
     preprocessorOpts.addMacroDef("WIN32_LEAN_AND_MEAN");
