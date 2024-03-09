@@ -3,7 +3,9 @@
 #include "lcj/compiler/DiagnosticLogger.h"
 #include "lcj/core/LeviCppJit.h"
 
+#include <clang/Basic/DiagnosticLex.h>
 #include <clang/Basic/DiagnosticSema.h>
+
 #include <clang/Basic/SourceManager.h>
 #include <clang/CodeGen/CodeGenAction.h>
 #include <clang/CodeGen/ModuleBuilder.h>
@@ -97,6 +99,11 @@ CxxCompileLayer::CxxCompileLayer() : impl(std::make_unique<Impl>()) {
 
     impl->diagnosticsEngine->setSeverity(
         clang::diag::warn_unhandled_ms_attribute_ignored,
+        clang::diag::Severity::Ignored,
+        {}
+    );
+    impl->diagnosticsEngine->setSeverity(
+        clang::diag::warn_pragma_diagnostic_unknown_warning,
         clang::diag::Severity::Ignored,
         {}
     );

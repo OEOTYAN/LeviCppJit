@@ -56,6 +56,8 @@ bool LeviCppJit::enable() {
 #pragma comment(lib, "version.lib")
 
     // #include <iostream>
+// #include "mc/world/level/storage/LevelData.h"
+// #include "mc/world/level/Level.h"
 
 #include <cstdio>
 
@@ -123,6 +125,9 @@ ll::service::getLevel()->getLevelName().c_str());
             continue;
         }
         getSelf().getLogger().info(opt);
+    }
+    for (auto node : module.getOrInsertNamedMetadata("llvm.linker.options")->operands()) {
+        node->dumpTree();
     }
 
     // for (auto& func : module.getFunctionList()) {

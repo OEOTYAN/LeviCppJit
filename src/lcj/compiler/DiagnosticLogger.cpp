@@ -19,13 +19,13 @@ void DiagnosticLogger::HandleDiagnostic(
 
     switch (DiagLevel) {
     case clang::DiagnosticsEngine::Level::Ignored:
-        logger.debug("[Ignored] {}{}", s, std::string_view{sd.getMessage()});
+        logger.debug("Ignored: {}{}", s, std::string_view{sd.getMessage()});
         return;
     case clang::DiagnosticsEngine::Level::Note:
-        logger.info("[Note] {}{}", s, std::string_view{sd.getMessage()});
+        logger.info("{}{}", s, std::string_view{sd.getMessage()});
         return;
     case clang::DiagnosticsEngine::Level::Remark:
-        logger.info("[Remark] {}{}", s, std::string_view{sd.getMessage()});
+        logger.info("Remark: {}{}", s, std::string_view{sd.getMessage()});
         return;
     case clang::DiagnosticsEngine::Level::Warning:
         logger.warn("{}{}", s, std::string_view{sd.getMessage()});
