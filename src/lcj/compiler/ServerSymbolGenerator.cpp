@@ -1,6 +1,6 @@
 #include "ServerSymbolGenerator.h"
 
-#include "core/LeviCppJit.h"
+#include "lcj/core/LeviCppJit.h"
 
 #include <ll/api/memory/Memory.h>
 
@@ -18,16 +18,16 @@ llvm::Error ServerSymbolGenerator::tryToGenerate(
     bool hasGlobalPrefix = (globalPrefix != '\0');
 
     for (auto& KV : Symbols) {
-        auto& name = KV.first;
-        if ((*name).empty()) continue;
-        if (hasGlobalPrefix && (*name).front() != globalPrefix) continue;
+        std::string_view name = *KV.first;
+        if (name.empty()) continue;
+        if (hasGlobalPrefix && name.front() != globalPrefix) continue;
 
-        std::string Tmp((*name).data() + hasGlobalPrefix, (*name).size() - hasGlobalPrefix);
+        name.remove_prefix(hasGlobalPrefix);
 
-        LeviCppJit::getInstance().getSelf().getLogger().debug("resolveSymbol: {}", Tmp);
+        LeviCppJit::getInstance().getSelf().getLogger().debug("resolveSymbol: {}", name);
 
-        if (void* addr = ll::memory::resolveSymbol(Tmp.c_str()))
-            newSymbols[name] = llvm::JITEvaluatedSymbol{
+        if (void* addr = ll::memory::resolveSymbol(name, true))
+            newSymbols[KV.first] = llvm::JITEvaluatedSymbol{
                 static_cast<llvm::JITTargetAddress>(reinterpret_cast<uintptr_t>(addr)),
                 llvm::JITSymbolFlags::Exported
             };

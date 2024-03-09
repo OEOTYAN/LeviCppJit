@@ -1,19 +1,22 @@
 #include "LeviCppJit.h"
 
-#include "compiler/CxxCompileLayer.h"
-#include "compiler/ServerSymbolGenerator.h"
+#include "lcj/compiler/CxxCompileLayer.h"
+#include "lcj/compiler/ServerSymbolGenerator.h"
+#include "lcj/utils/LogOnError.h"
 
-#include "llvm/ExecutionEngine/Orc/LLJIT.h"
-#include "llvm/IR/Function.h"
-#include "llvm/IR/IRBuilder.h"
-#include "llvm/IR/Module.h"
-#include "llvm/Support/Host.h"
-#include "llvm/Support/TargetSelect.h"
+#include <llvm/ExecutionEngine/Orc/LLJIT.h>
+#include <llvm/IR/Function.h>
+#include <llvm/IR/IRBuilder.h>
+#include <llvm/IR/Module.h>
+#include <llvm/Support/Host.h>
+#include <llvm/Support/TargetSelect.h>
+
 
 #include <ll/api/plugin/NativePlugin.h>
 #include <magic_enum.hpp>
 
 namespace lcj {
+
 
 struct LeviCppJit::Impl {
     CxxCompileLayer cxxCompileLayer;
@@ -50,6 +53,7 @@ bool LeviCppJit::enable() {
 #define MCAPI  __declspec(dllimport)
 #define MCVAPI  __declspec(dllimport)
 
+#pragma comment(lib, "version.lib")
 
     // #include <iostream>
 
@@ -100,7 +104,26 @@ ll::service::getLevel()->getLevelName().c_str());
         getSelf().getLogger().error("compile failed");
         return false;
     }
-    // auto& module = *tmodule.getModuleUnlocked();
+    auto& module = *tmodule.getModuleUnlocked();
+
+    for (auto node : module.getOrInsertNamedMetadata("llvm.linker.options")->operands()) {
+        if (node->getMetadataID() != llvm::Metadata::MDTupleKind) {
+            continue;
+        }
+        auto tuple = cast<llvm::MDTuple>(node);
+        if (tuple->getNumOperands() == 0) {
+            continue;
+        }
+        auto data = tuple->getOperand(0).get();
+        if (data->getMetadataID() != llvm::Metadata::MDStringKind) {
+            continue;
+        }
+        auto opt = cast<llvm::MDString>(data)->getString();
+        if (!opt.consume_front("/DEFAULTLIB:")) {
+            continue;
+        }
+        getSelf().getLogger().info(opt);
+    }
 
     // for (auto& func : module.getFunctionList()) {
     //     getSelf().getLogger().info(
@@ -116,27 +139,39 @@ ll::service::getLevel()->getLevelName().c_str());
 
     // getSelf().getLogger().info(s);
 
-    llvm::ExitOnError ExitOnErr;
+    llvm::InitializeNativeTarget();
+    llvm::InitializeNativeTargetAsmPrinter();
 
-    auto J = ExitOnErr(llvm::orc::LLLazyJITBuilder()
-                           .setNumCompileThreads(std::thread::hardware_concurrency())
-                           .create());
+    auto J = CheckExcepted(llvm::orc::LLLazyJITBuilder()
+                               .setNumCompileThreads(std::thread::hardware_concurrency())
+                               .create());
 
-    ExitOnErr(J->addIRModule(std::move(tmodule)));
-
-    J->getMainJITDylib().addGenerator(
-        ExitOnErr(llvm::orc::DynamicLibrarySearchGenerator::GetForCurrentProcess(
-            J->getDataLayout().getGlobalPrefix()
-        ))
-    );
-    J->getMainJITDylib().addGenerator(ExitOnErr(llvm::orc::DynamicLibrarySearchGenerator::Load(
-        "msvcp140_1.dll",
-        J->getDataLayout().getGlobalPrefix()
-    )));
+    CheckExcepted(J->addIRModule(std::move(tmodule)));
 
     J->getMainJITDylib().addGenerator(std::make_unique<ServerSymbolGenerator>());
 
-    auto Add1Addr = ExitOnErr(J->lookup("add1"));
+    J->getMainJITDylib().addGenerator(
+        CheckExcepted(llvm::orc::DynamicLibrarySearchGenerator::GetForCurrentProcess(
+            J->getDataLayout().getGlobalPrefix()
+        ))
+    );
+    for (auto& lb :
+         {"vcruntime140_1.dll",
+          "vcruntime140.dll",
+          "msvcp140.dll",
+          "msvcp140_codecvt_ids.dll",
+          "msvcp140_atomic_wait.dll",
+          "msvcp140_2.dll",
+          "msvcp140_codecvt_ids.dll",
+          "msvcp140_1.dll",
+          "concrt140.dll",
+          "ucrtbase.dll"}) {
+        J->getMainJITDylib().addGenerator(CheckExcepted(
+            llvm::orc::DynamicLibrarySearchGenerator::Load(lb, J->getDataLayout().getGlobalPrefix())
+        ));
+    }
+
+    auto Add1Addr = CheckExcepted(J->lookup("add1"));
 
     getSelf().getLogger().info("{}", Add1Addr.toPtr<int(int)>()(42));
 

@@ -5,10 +5,6 @@
 
 #include <llvm/ExecutionEngine/Orc/ThreadSafeModule.h>
 
-namespace llvm::orc {
-class ThreadSafeModule;
-}
-
 namespace lcj {
 class CxxCompileLayer {
     struct Impl;

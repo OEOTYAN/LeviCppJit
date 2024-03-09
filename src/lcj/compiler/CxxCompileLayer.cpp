@@ -1,6 +1,7 @@
 #include "CxxCompileLayer.h"
 
-#include "core/LeviCppJit.h"
+#include "lcj/compiler/DiagnosticLogger.h"
+#include "lcj/core/LeviCppJit.h"
 
 #include <clang/Basic/DiagnosticSema.h>
 #include <clang/Basic/SourceManager.h>
@@ -18,45 +19,6 @@
 #pragma comment(lib, "version.lib")
 
 namespace lcj {
-
-class DiagnosticLogger : public clang::DiagnosticConsumer {
-public:
-    void HandleDiagnostic(clang::DiagnosticsEngine::Level DiagLevel, const clang::Diagnostic& Info)
-        override {
-        auto        sd   = clang::StoredDiagnostic{DiagLevel, Info};
-        auto&       file = sd.getLocation();
-        std::string s;
-        if (file.hasManager()) {
-            s += file.printToString(file.getManager()) + ": ";
-        }
-
-        auto& logger = LeviCppJit::getInstance().getSelf().getLogger();
-
-        switch (DiagLevel) {
-        case clang::DiagnosticsEngine::Level::Ignored:
-            logger.debug("[Ignored] {}{}", s, std::string_view{sd.getMessage()});
-            return;
-        case clang::DiagnosticsEngine::Level::Note:
-            logger.info("[Note] {}{}", s, std::string_view{sd.getMessage()});
-            return;
-        case clang::DiagnosticsEngine::Level::Remark:
-            logger.info("[Remark] {}{}", s, std::string_view{sd.getMessage()});
-            return;
-        case clang::DiagnosticsEngine::Level::Warning:
-            logger.warn("{}{}", s, std::string_view{sd.getMessage()});
-            return;
-        case clang::DiagnosticsEngine::Level::Error:
-            logger.error("{}{}", s, std::string_view{sd.getMessage()});
-            return;
-        case clang::DiagnosticsEngine::Level::Fatal:
-            logger.fatal("{}{}", s, std::string_view{sd.getMessage()});
-            return;
-        default:
-            std::unreachable();
-        }
-    }
-};
-
 struct CxxCompileLayer::Impl {
     std::unique_ptr<clang::CompilerInstance>                compilerInstance;
     llvm::IntrusiveRefCntPtr<clang::DiagnosticsEngine>      diagnosticsEngine;
@@ -64,10 +26,6 @@ struct CxxCompileLayer::Impl {
 };
 
 CxxCompileLayer::CxxCompileLayer() : impl(std::make_unique<Impl>()) {
-
-    llvm::InitializeNativeTarget();
-    llvm::InitializeNativeTargetAsmPrinter();
-
     impl->compilerInstance  = std::make_unique<clang::CompilerInstance>();
     impl->diagnosticsEngine = std::make_unique<clang::DiagnosticsEngine>(
         std::make_unique<clang::DiagnosticIDs>(),
@@ -92,9 +50,11 @@ CxxCompileLayer::CxxCompileLayer() : impl(std::make_unique<Impl>()) {
     auto& codeGenOpts           = compilerInvocation.getCodeGenOpts();
     codeGenOpts.CodeModel       = "default";
     codeGenOpts.RelocationModel = llvm::Reloc::PIC_;
-    // codeGenOpts.setDebugInfo(clang::codegenoptions::DebugInfoKind::FullDebugInfo);
+    codeGenOpts.setDebugInfo(clang::codegenoptions::DebugInfoKind::FullDebugInfo);
 
-    compilerInvocation.getFrontendOpts().ProgramAction = clang::frontend::EmitLLVMOnly;
+    auto& frontendOpts = compilerInvocation.getFrontendOpts();
+
+    frontendOpts.ProgramAction = clang::frontend::EmitLLVMOnly;
 
     auto& langOpts = *compilerInvocation.getLangOpts();
 
@@ -109,7 +69,7 @@ CxxCompileLayer::CxxCompileLayer() : impl(std::make_unique<Impl>()) {
     langOpts.CPlusPlus2b                = true;
     langOpts.EncodeCXXClassTemplateSpec = true;
     langOpts.CXXExceptions              = true;
-    // langOpts.EHAsynch                      = true;
+    // langOpts.EHAsynch                = true;
     langOpts.Digraphs                      = true;
     langOpts.CXXOperatorNames              = true;
     langOpts.Bool                          = true;
@@ -151,6 +111,8 @@ CxxCompileLayer::CxxCompileLayer() : impl(std::make_unique<Impl>()) {
     preprocessorOpts.addMacroDef("ENTT_PACKED_PAGE=128");
     preprocessorOpts.addMacroDef("_HAS_CXX23=1");
     preprocessorOpts.addMacroDef("LL_EXPORT");
+    preprocessorOpts.addMacroDef("_MT");
+    preprocessorOpts.addMacroDef("_DLL");
 
     auto& headerSearchOpts = compilerInvocation.getHeaderSearchOpts();
 
