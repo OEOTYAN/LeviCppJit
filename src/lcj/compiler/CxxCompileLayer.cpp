@@ -15,10 +15,8 @@
 #include <llvm/IR/Function.h>
 #include <llvm/IR/IRBuilder.h>
 #include <llvm/IR/Module.h>
-#include <llvm/Support/Host.h>
 #include <llvm/Support/TargetSelect.h>
-
-#pragma comment(lib, "version.lib")
+#include <llvm/TargetParser/Host.h>
 
 namespace lcj {
 struct CxxCompileLayer::Impl {
@@ -50,15 +48,14 @@ CxxCompileLayer::CxxCompileLayer() : impl(std::make_unique<Impl>()) {
     compilerInvocation.getTargetOpts().Triple = llvm::sys::getProcessTriple();
 
     auto& codeGenOpts           = compilerInvocation.getCodeGenOpts();
-    codeGenOpts.CodeModel       = "default";
+    codeGenOpts.CodeModel       = "small";
     codeGenOpts.RelocationModel = llvm::Reloc::PIC_;
-    codeGenOpts.setDebugInfo(clang::codegenoptions::DebugInfoKind::FullDebugInfo);
 
     auto& frontendOpts = compilerInvocation.getFrontendOpts();
 
     frontendOpts.ProgramAction = clang::frontend::EmitLLVMOnly;
 
-    auto& langOpts = *compilerInvocation.getLangOpts();
+    auto& langOpts = compilerInvocation.getLangOpts();
 
     langOpts.LineComment                = true;
     langOpts.Optimize                   = true;
@@ -68,7 +65,8 @@ CxxCompileLayer::CxxCompileLayer() : impl(std::make_unique<Impl>()) {
     langOpts.CPlusPlus14                = true;
     langOpts.CPlusPlus17                = true;
     langOpts.CPlusPlus20                = true;
-    langOpts.CPlusPlus2b                = true;
+    langOpts.CPlusPlus23                = true;
+    langOpts.CPlusPlus26                = true;
     langOpts.EncodeCXXClassTemplateSpec = true;
     langOpts.CXXExceptions              = true;
     // langOpts.EHAsynch                = true;

@@ -3,11 +3,12 @@ add_rules("mode.release")
 add_repositories("liteldev-repo https://github.com/LiteLDev/xmake-repo.git")
 
 add_requires("levilamina")
-add_requires("llvm-prebuilt 16.0.6")
+add_requires("llvm-prebuilt 18.1.1")
 
 set_runtimes("MD")
 
 target("LeviCppJit")
+    add_syslinks("wsock32", "version")
     add_cxflags(
         "/EHa", 
         "/utf-8" 

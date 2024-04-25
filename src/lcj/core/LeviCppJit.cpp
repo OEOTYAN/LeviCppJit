@@ -3,17 +3,22 @@
 #include "lcj/compiler/CxxCompileLayer.h"
 #include "lcj/compiler/ServerSymbolGenerator.h"
 #include "lcj/utils/LogOnError.h"
+#include "lcj/compiler/CoffHeaderMaterializationUnit.h"
 
+#include <llvm/ExecutionEngine/Orc/EPCEHFrameRegistrar.h>
+#include <llvm/ExecutionEngine/Orc/COFFPlatform.h>
 #include <llvm/ExecutionEngine/Orc/LLJIT.h>
 #include <llvm/IR/Function.h>
 #include <llvm/IR/IRBuilder.h>
 #include <llvm/IR/Module.h>
-#include <llvm/Support/Host.h>
 #include <llvm/Support/TargetSelect.h>
-
 
 #include <ll/api/plugin/NativePlugin.h>
 #include <magic_enum.hpp>
+
+#include <ll/api/utils/StacktraceUtils.h>
+
+extern "C" void* __stdcall LoadLibraryA(char const* lpLibFileName);
 
 namespace lcj {
 
@@ -102,79 +107,102 @@ ll::service::getLevel()->getLevelName().c_str());
 
     )");
 
-    if (!tmodule.getModuleUnlocked()) {
+    if (!tmodule) {
         getSelf().getLogger().error("compile failed");
         return false;
     }
-    auto& module = *tmodule.getModuleUnlocked();
 
-    for (auto node : module.getOrInsertNamedMetadata("llvm.linker.options")->operands()) {
-        if (node->getMetadataID() != llvm::Metadata::MDTupleKind) {
-            continue;
+    tmodule.withModuleDo([&, this](llvm::Module& module) {
+        for (auto node : module.getNamedMetadata("llvm.linker.options")->operands()) {
+            if (auto tuple = dyn_cast<llvm::MDTuple>(node)) {
+                if (tuple->getNumOperands() == 0) {
+                    continue;
+                }
+                if (auto str = dyn_cast<llvm::MDString>(tuple->getOperand(0).get())) {
+                    auto opt = str->getString();
+                    if (!opt.consume_front("/DEFAULTLIB:")) {
+                        continue;
+                    }
+                    getSelf().getLogger().info(opt);
+                }
+            }
         }
-        auto tuple = cast<llvm::MDTuple>(node);
-        if (tuple->getNumOperands() == 0) {
-            continue;
-        }
-        auto data = tuple->getOperand(0).get();
-        if (data->getMetadataID() != llvm::Metadata::MDStringKind) {
-            continue;
-        }
-        auto opt = cast<llvm::MDString>(data)->getString();
-        if (!opt.consume_front("/DEFAULTLIB:")) {
-            continue;
-        }
-        getSelf().getLogger().info(opt);
-    }
-    for (auto node : module.getOrInsertNamedMetadata("llvm.linker.options")->operands()) {
-        node->dumpTree();
-    }
-
-    // for (auto& func : module.getFunctionList()) {
-    //     getSelf().getLogger().info(
-    //         "Linkage: {}, DLLStorageClass: {}, Name: {}",
-    //         magic_enum::enum_name(func.getLinkage()),
-    //         magic_enum::enum_name(func.getDLLStorageClass()),
-    //         std::string_view{func.getName()}
-    //     );
-    // }
-
-    // std::string s;
-    // llvm::raw_string_ostream{s} << module;
-
-    // getSelf().getLogger().info(s);
+    });
 
     llvm::InitializeNativeTarget();
     llvm::InitializeNativeTargetAsmPrinter();
 
-    auto J = CheckExcepted(llvm::orc::LLLazyJITBuilder()
-                               .setNumCompileThreads(std::thread::hardware_concurrency())
-                               .create());
+    auto Builder = llvm::orc::LLLazyJITBuilder();
+
+    Builder.setJITTargetMachineBuilder(CheckExcepted(llvm::orc::JITTargetMachineBuilder::detectHost(
+    )));
+
+    Builder.getJITTargetMachineBuilder()
+        ->setRelocationModel(llvm::Reloc::PIC_)
+        .setCodeModel(llvm::CodeModel::Small);
+
+    auto ES = std::make_unique<llvm::orc::ExecutionSession>(
+        CheckExcepted(llvm::orc::SelfExecutorProcessControl::Create())
+    );
+    ES->setErrorReporter([](llvm::Error err) {
+        auto l = ll::Logger::lock();
+        LeviCppJit::getInstance().getSelf().getLogger().error(
+            "[ExecutionSession] {}",
+            llvm::toString(std::move(err))
+        );
+    });
+    Builder.setExecutionSession(std::move(ES));
+
+    auto J = CheckExcepted(
+        Builder
+            .setNumCompileThreads(std::thread::hardware_concurrency())
+            // .setPlatformSetUp(llvm::orc::ExecutorNativePlatform{ll::string_utils::wstr2str(
+            //     (getSelf().getDataDir() / u8R"(library\orc\orc_rt-x86_64.lib)").wstring()
+            // )})
+            .setObjectLinkingLayerCreator([](llvm::orc::ExecutionSession& ES, llvm::Triple const&) {
+                auto L = std::make_unique<llvm::orc::ObjectLinkingLayer>(ES);
+
+                L->addPlugin(std::make_unique<llvm::orc::EHFrameRegistrationPlugin>(
+                    ES,
+                    CheckExcepted(llvm::orc::EPCEHFrameRegistrar::Create(ES))
+                ));
+                return L;
+            })
+            .create()
+    );
+
+    auto imageBaseSymbol = J->getExecutionSession().intern("__ImageBase");
 
     CheckExcepted(J->addIRModule(std::move(tmodule)));
 
+    CheckExcepted(J->getMainJITDylib().define(
+        std::make_unique<COFFHeaderMaterializationUnit>(*J, imageBaseSymbol)
+    ));
+
+    for (auto& str : std::vector<std::string>{
+             //  (getSelf().getDataDir() / u8R"(library\msvc\vcruntime.lib)").string(),
+             //  (getSelf().getDataDir() / u8R"(library\msvc\msvcrt.lib)").string(),
+             (getSelf().getDataDir() / u8R"(library\ucrt\ucrt.lib)").string(),
+             (getSelf().getDataDir() / u8R"(library\msvc\msvcprt.lib)").string(),
+         }) {
+        auto libSearcher = CheckExcepted(
+            llvm::orc::StaticLibraryDefinitionGenerator::Load(J->getObjLinkingLayer(), str.c_str())
+        );
+
+        for (auto& dll : libSearcher->getImportedDynamicLibraries()) {
+            getSelf().getLogger().info("dll: {}", dll);
+            LoadLibraryA(dll.c_str());
+        }
+
+        J->getMainJITDylib().addGenerator(std::move(libSearcher));
+    }
+
     J->getMainJITDylib().addGenerator(std::make_unique<ServerSymbolGenerator>());
 
-    J->getMainJITDylib().addGenerator(
-        CheckExcepted(llvm::orc::DynamicLibrarySearchGenerator::GetForCurrentProcess(
-            J->getDataLayout().getGlobalPrefix()
-        ))
-    );
-    for (auto& lb :
-         {"vcruntime140_1.dll",
-          "vcruntime140.dll",
-          "msvcp140.dll",
-          "msvcp140_codecvt_ids.dll",
-          "msvcp140_atomic_wait.dll",
-          "msvcp140_2.dll",
-          "msvcp140_codecvt_ids.dll",
-          "msvcp140_1.dll",
-          "concrt140.dll",
-          "ucrtbase.dll"}) {
-        J->getMainJITDylib().addGenerator(CheckExcepted(
-            llvm::orc::DynamicLibrarySearchGenerator::Load(lb, J->getDataLayout().getGlobalPrefix())
-        ));
-    }
+    J->getMainJITDylib().addGenerator(llvm::orc::DLLImportDefinitionGenerator::Create(
+        J->getExecutionSession(),
+        cast<llvm::orc::ObjectLinkingLayer>(J->getObjLinkingLayer())
+    ));
 
     auto Add1Addr = CheckExcepted(J->lookup("add1"));
 

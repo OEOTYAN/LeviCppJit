@@ -18,17 +18,21 @@ llvm::Error ServerSymbolGenerator::tryToGenerate(
     bool hasGlobalPrefix = (globalPrefix != '\0');
 
     for (auto& KV : Symbols) {
-        std::string_view name = *KV.first;
+        auto name = *KV.first;
         if (name.empty()) continue;
         if (hasGlobalPrefix && name.front() != globalPrefix) continue;
 
-        name.remove_prefix(hasGlobalPrefix);
+        name = name.drop_front(hasGlobalPrefix);
+        name.consume_front("__imp_");
 
-        LeviCppJit::getInstance().getSelf().getLogger().debug("resolveSymbol: {}", name);
+        LeviCppJit::getInstance().getSelf().getLogger().debug(
+            "resolveSymbol: {}",
+            std::string_view{name}
+        );
 
         if (void* addr = ll::memory::resolveSymbol(name, true))
-            newSymbols[KV.first] = llvm::JITEvaluatedSymbol{
-                static_cast<llvm::JITTargetAddress>(reinterpret_cast<uintptr_t>(addr)),
+            newSymbols[KV.first] = {
+                llvm::orc::ExecutorAddr::fromPtr(addr),
                 llvm::JITSymbolFlags::Exported
             };
     }
