@@ -3,7 +3,7 @@ add_rules("mode.release")
 add_repositories("liteldev-repo https://github.com/LiteLDev/xmake-repo.git")
 
 add_requires("levilamina")
-add_requires("llvm-prebuilt 18.1.1")
+add_requires("llvm-prebuilt 18.1.4")
 
 set_runtimes("MD")
 
