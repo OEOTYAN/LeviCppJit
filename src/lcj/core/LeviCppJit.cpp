@@ -126,11 +126,11 @@ class Level {
 ll::service::getLevel()->getLevelName().c_str());
 
      static   A a{};
-try{
-        throw std::runtime_error{"hi"};
-}catch(...){
-        std::cout<<"catched"<<std::endl;
-}
+// try{
+//         throw std::runtime_error{"hi"};
+// }catch(...){
+//         std::cout<<"catched"<<std::endl;
+// }
         return a.hi(x+4);
     }
     }
@@ -157,32 +157,34 @@ try{
             }
         }
     });
-    auto& lib = CheckExcepted(mImpl->JitEngine->createJITDylib("plugin1"));
+    auto& lib = CheckExcepted(mImpl->JitEngine->getExecutionSession().createJITDylib("plugin1"));
 
     CheckExcepted(mImpl->JitEngine->addIRModule(lib, std::move(tmodule)));
 
     auto& es = mImpl->JitEngine->getExecutionSession();
 
-    // CheckExcepted(lib.define(llvm::orc::absoluteSymbols({
-    //     {es.intern("__orc_rt_jit_dispatch"),
-    //      {es.getExecutorProcessControl().getJITDispatchInfo().JITDispatchFunction,
-    //       llvm::JITSymbolFlags::Weak}                                                               },
-    //     {es.intern("__orc_rt_jit_dispatch_ctx"),
-    //      {es.getExecutorProcessControl().getJITDispatchInfo().JITDispatchContext,
-    //       llvm::JITSymbolFlags::Weak}                                                               },
-    //     {es.intern("__ImageBase"),
-    //      {llvm::orc::ExecutorAddr::fromPtr(&ll::win_utils::__ImageBase), llvm::JITSymbolFlags::Weak}
-    //     },
-    //     {es.intern("__lljit.platform_support_instance"),
-    //      {llvm::orc::ExecutorAddr::fromPtr(mImpl->JitEngine->getPlatformSupport()),
-    //       llvm::JITSymbolFlags::Weak}                                                               }
-    // })));
+    CheckExcepted(lib.define(llvm::orc::absoluteSymbols({
+  // {es.intern("__orc_rt_jit_dispatch"),
+  //  {es.getExecutorProcessControl().getJITDispatchInfo().JITDispatchFunction,
+  //   llvm::JITSymbolFlags::Callable}},
+  // {es.intern("__orc_rt_jit_dispatch_ctx"),
+  //  {es.getExecutorProcessControl().getJITDispatchInfo().JITDispatchContext,
+  //   llvm::JITSymbolFlags::Callable}},
+  // {es.intern("__ImageBase"),
+  //  {llvm::orc::ExecutorAddr::fromPtr(&ll::win_utils::__ImageBase),
+  //   llvm::JITSymbolFlags::Exported}},
+        {es.intern("__lljit.platform_support_instance"),
+         {llvm::orc::ExecutorAddr::fromPtr(mImpl->JitEngine->getPlatformSupport()),
+          llvm::JITSymbolFlags::Exported}}
+    })));
 
     for (auto& str : std::vector<std::string>{
-             //  (getSelf().getDataDir() / u8R"(library\msvc\vcruntime.lib)").string(),
-             //  (getSelf().getDataDir() / u8R"(library\msvc\msvcrt.lib)").string(),
+             (getSelf().getDataDir() / u8R"(library\msvc\vcruntime.lib)").string(),
+             (getSelf().getDataDir() / u8R"(library\msvc\msvcrt.lib)").string(),
              (getSelf().getDataDir() / u8R"(library\ucrt\ucrt.lib)").string(),
              (getSelf().getDataDir() / u8R"(library\msvc\msvcprt.lib)").string(),
+             (getSelf().getDataDir() / u8R"(library\um\Kernel32.lib)").string(),
+             (getSelf().getDataDir() / u8R"(library\ll\LeviLamina.lib)").string(),
              (getSelf().getDataDir() / u8R"(library\msvc\clang_rt.builtins-x86_64.lib)").string()
          }) {
         auto libSearcher = CheckExcepted(llvm::orc::StaticLibraryDefinitionGenerator::Load(
@@ -192,7 +194,12 @@ try{
 
         for (auto& dll : libSearcher->getImportedDynamicLibraries()) {
             getSelf().getLogger().info("dll: {}", dll);
-            LoadLibraryA(dll.c_str());
+
+            lib.addGenerator(CheckExcepted(llvm::orc::DynamicLibrarySearchGenerator::Load(
+                dll.c_str(),
+                mImpl->JitEngine->getDataLayout().getGlobalPrefix()
+            )));
+            // LoadLibraryA(dll.c_str());
         }
 
         lib.addGenerator(std::move(libSearcher));
@@ -202,10 +209,10 @@ try{
     // )));
     lib.addGenerator(std::make_unique<ServerSymbolGenerator>());
 
-    lib.addGenerator(llvm::orc::DLLImportDefinitionGenerator::Create(
-        es,
-        cast<llvm::orc::ObjectLinkingLayer>(mImpl->JitEngine->getObjLinkingLayer())
-    ));
+    // lib.addGenerator(llvm::orc::DLLImportDefinitionGenerator::Create(
+    //     es,
+    //     cast<llvm::orc::ObjectLinkingLayer>(mImpl->JitEngine->getObjLinkingLayer())
+    // ));
     CheckExcepted(mImpl->JitEngine->initialize(lib));
 
     auto Add1Addr = CheckExcepted(mImpl->JitEngine->lookup(lib, "add1"));
