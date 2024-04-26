@@ -18,8 +18,6 @@
 #include <llvm/Support/Host.h>
 #include <llvm/Support/TargetSelect.h>
 
-#pragma comment(lib, "version.lib")
-
 namespace lcj {
 struct CxxCompileLayer::Impl {
     std::unique_ptr<clang::CompilerInstance>                compilerInstance;
@@ -52,7 +50,7 @@ CxxCompileLayer::CxxCompileLayer() : impl(std::make_unique<Impl>()) {
     auto& codeGenOpts           = compilerInvocation.getCodeGenOpts();
     codeGenOpts.CodeModel       = "default";
     codeGenOpts.RelocationModel = llvm::Reloc::PIC_;
-    codeGenOpts.setDebugInfo(clang::codegenoptions::DebugInfoKind::FullDebugInfo);
+    codeGenOpts.EmulatedTLS     = true;
 
     auto& frontendOpts = compilerInvocation.getFrontendOpts();
 
@@ -138,13 +136,22 @@ CxxCompileLayer::~CxxCompileLayer() = default;
 
 
 llvm::orc::ThreadSafeModule CxxCompileLayer::compileRaw(std::string_view code) {
+    std::string codeBuffer{
+        R"(extern "C" {
+    int _Init_global_epoch = (-2147483647i32 - 1);
+    __declspec(thread) int _Init_thread_epoch = (-2147483647i32 - 1);
+}
+)"
+    };
+    codeBuffer  += code;
+
+    auto buffer  = llvm::MemoryBuffer::getMemBuffer(codeBuffer);
+
     auto& inMemoryFileSystem = *impl->inMemoryFileSystem;
     if (inMemoryFileSystem.exists("main")) {
-        inMemoryFileSystem.getBufferForFile("main").get() =
-            llvm::MemoryBuffer::getMemBufferCopy(code);
+        inMemoryFileSystem.getBufferForFile("main").get() = std::move(buffer);
     } else {
-        inMemoryFileSystem
-            .addFile("main", time(nullptr), llvm::MemoryBuffer::getMemBufferCopy(code));
+        inMemoryFileSystem.addFile("main", time(nullptr), std::move(buffer));
     }
     auto& frontendOpts = impl->compilerInstance->getInvocation().getFrontendOpts();
 
