@@ -136,13 +136,11 @@ CxxCompileLayer::~CxxCompileLayer() = default;
 
 
 llvm::orc::ThreadSafeModule CxxCompileLayer::compileRaw(std::string_view code) {
-    std::string codeBuffer{
-        R"(extern "C" {
-    int _Init_global_epoch = (-2147483647i32 - 1);
+    std::string codeBuffer{R"(
+extern "C" {
     __declspec(thread) int _Init_thread_epoch = (-2147483647i32 - 1);
 }
-)"
-    };
+)"};
     codeBuffer  += code;
 
     auto buffer  = llvm::MemoryBuffer::getMemBuffer(codeBuffer);

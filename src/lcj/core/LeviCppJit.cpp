@@ -12,6 +12,7 @@
 #include <llvm/IR/Module.h>
 #include <llvm/Support/Host.h>
 #include <llvm/Support/TargetSelect.h>
+#include <llvm/Support/ManagedStatic.h>
 
 #include <ll/api/plugin/NativePlugin.h>
 #include <ll/api/plugin/RegisterHelper.h>
@@ -43,13 +44,11 @@ struct LeviCppJit::Impl {
         targetOptions.ExplicitEmulatedTLS = true;
         targetOptions.ExceptionModel      = llvm::ExceptionHandling::WinEH;
 
-        JitEngine = CheckExcepted(
-            llvm::orc::LLLazyJITBuilder{}
-                .setJITTargetMachineBuilder(std::move(machineBuilder))
-                .setExecutionSession(std::move(ES))
-                .setNumCompileThreads(std::thread::hardware_concurrency())
-                .create()
-        );
+        JitEngine = CheckExcepted(llvm::orc::LLLazyJITBuilder{}
+                                      .setJITTargetMachineBuilder(std::move(machineBuilder))
+                                      .setExecutionSession(std::move(ES))
+                                      .setNumCompileThreads(std::thread::hardware_concurrency())
+                                      .create());
     }
 };
 
@@ -70,6 +69,7 @@ bool LeviCppJit::load() {
     return true;
 }
 bool LeviCppJit::unload() {
+    llvm::llvm_shutdown_obj s{};
     mImpl.reset();
     return true;
 }
@@ -132,6 +132,8 @@ ll::service::getLevel()->getLevelName().c_str());
      static   A a{};
 try{
         throw std::runtime_error{"hi"};
+        // float a =0;
+        // a=5.0f/a;
 }catch(...){
         std::cout<<"catched"<<std::endl;
 }
@@ -185,29 +187,31 @@ try{
          llvm::JITSymbolFlags::Weak
          )}
     })));
-
     for (auto& str : std::vector<std::string>{
-             //  (getSelf().getDataDir() / u8R"(library\msvc\vcruntime.lib)").string(),
-             //  (getSelf().getDataDir() / u8R"(library\msvc\msvcrt.lib)").string(),
+             (getSelf().getDataDir() / u8R"(library\msvc\vcruntime.lib)").string(),
              (getSelf().getDataDir() / u8R"(library\ucrt\ucrt.lib)").string(),
              (getSelf().getDataDir() / u8R"(library\msvc\msvcprt.lib)").string(),
+             (getSelf().getDataDir() / u8R"(library\um\Kernel32.lib)").string(),
+             (getSelf().getDataDir() / u8R"(library\ll\LeviLamina.lib)").string(),
              (getSelf().getDataDir() / u8R"(library\msvc\clang_rt.builtins-x86_64.lib)").string()
          }) {
         auto libSearcher = CheckExcepted(llvm::orc::StaticLibraryDefinitionGenerator::Load(
             mImpl->JitEngine->getObjLinkingLayer(),
             str.c_str()
         ));
-
         for (auto& dll : libSearcher->getImportedDynamicLibraries()) {
             getSelf().getLogger().info("dll: {}", dll);
-            LoadLibraryA(dll.c_str());
-        }
 
+            lib.addGenerator(CheckExcepted(llvm::orc::DynamicLibrarySearchGenerator::Load(
+                dll.c_str(),
+                mImpl->JitEngine->getDataLayout().getGlobalPrefix()
+            )));
+        }
         lib.addGenerator(std::move(libSearcher));
     }
-    lib.addGenerator(CheckExcepted(llvm::orc::DynamicLibrarySearchGenerator::GetForCurrentProcess(
-        mImpl->JitEngine->getDataLayout().getGlobalPrefix()
-    )));
+    // lib.addGenerator(CheckExcepted(llvm::orc::DynamicLibrarySearchGenerator::GetForCurrentProcess(
+    //     mImpl->JitEngine->getDataLayout().getGlobalPrefix()
+    // )));
     lib.addGenerator(std::make_unique<ServerSymbolGenerator>());
 
     lib.addGenerator(llvm::orc::DLLImportDefinitionGenerator::Create(
@@ -219,7 +223,6 @@ try{
     auto Add1Addr = CheckExcepted(mImpl->JitEngine->lookup(lib, "add1"));
 
     getSelf().getLogger().info("{}", Add1Addr.toPtr<int(int)>()(42));
-
 
     CheckExcepted(mImpl->JitEngine->deinitialize(lib));
     CheckExcepted(es.removeJITDylib(lib));
