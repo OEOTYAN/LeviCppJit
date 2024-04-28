@@ -128,15 +128,7 @@ class Level {
 
         printf("%s\n", 
 ll::service::getLevel()->getLevelName().c_str());
-
      static   A a{};
-try{
-        throw std::runtime_error{"hi"};
-        // float a =0;
-        // a=5.0f/a;
-}catch(...){
-        std::cout<<"catched"<<std::endl;
-}
         return a.hi(x+4);
     }
     }
