@@ -1,5 +1,7 @@
 #pragma once
 
+#include <any>
+
 #include <ll/api/plugin/NativePlugin.h>
 
 namespace lcj {
@@ -19,7 +21,10 @@ public:
 
     [[nodiscard]] ll::plugin::NativePlugin& getSelf() const;
 
-    [[nodiscard]] ll::Logger& getLogger() const { return getSelf().getLogger(); }
+    [[nodiscard]] decltype(auto) getLogger() const { return (getSelf().getLogger()); }
+    [[nodiscard]] decltype(auto) getDataDir() const { return (getSelf().getDataDir()); }
+
+    std::string simpleEval(std::string_view code);
 
     bool load();
 

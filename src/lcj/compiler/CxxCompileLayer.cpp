@@ -5,11 +5,11 @@
 
 #include <clang/Basic/DiagnosticLex.h>
 #include <clang/Basic/DiagnosticSema.h>
-
 #include <clang/Basic/SourceManager.h>
 #include <clang/CodeGen/CodeGenAction.h>
 #include <clang/CodeGen/ModuleBuilder.h>
 #include <clang/Frontend/CompilerInstance.h>
+#include <clang/Frontend/FrontendActions.h>
 #include <clang/Lex/PreprocessorOptions.h>
 #include <llvm/ExecutionEngine/Orc/LLJIT.h>
 #include <llvm/IR/Function.h>
@@ -135,7 +135,8 @@ CxxCompileLayer::CxxCompileLayer() : impl(std::make_unique<Impl>()) {
 CxxCompileLayer::~CxxCompileLayer() = default;
 
 
-llvm::orc::ThreadSafeModule CxxCompileLayer::compileRaw(std::string_view code) {
+llvm::orc::ThreadSafeModule
+CxxCompileLayer::compileRaw(std::string_view code, std::string_view name) {
     // EmulatedTLS
     std::string codeBuffer{R"(
 extern "C" {
@@ -160,21 +161,16 @@ inline void _Init_thread_abort(volatile int* ptss) {
     _InterlockedAnd(reinterpret_cast<volatile long*>(ptss), 0);
 }
 }
+#include <__msvc_all_public_headers.hpp>
 )"};
-    codeBuffer  += code;
+    codeBuffer += code;
 
-    auto buffer  = llvm::MemoryBuffer::getMemBuffer(codeBuffer);
+    auto buffer = llvm::MemoryBuffer::getMemBuffer(codeBuffer);
 
-    auto& inMemoryFileSystem = *impl->inMemoryFileSystem;
-    if (inMemoryFileSystem.exists("main")) {
-        inMemoryFileSystem.getBufferForFile("main").get() = std::move(buffer);
-    } else {
-        inMemoryFileSystem.addFile("main", time(nullptr), std::move(buffer));
-    }
     auto& frontendOpts = impl->compilerInstance->getInvocation().getFrontendOpts();
 
     frontendOpts.Inputs.clear();
-    frontendOpts.Inputs.push_back(clang::FrontendInputFile{"main", clang::Language::CXX});
+    frontendOpts.Inputs.push_back(clang::FrontendInputFile{*buffer, clang::Language::CXX});
 
     auto context = std::make_unique<llvm::LLVMContext>();
 
@@ -183,8 +179,33 @@ inline void _Init_thread_abort(volatile int* ptss) {
     if (!impl->compilerInstance->ExecuteAction(llvmAction)) {
         return {};
     }
-
     return {llvmAction.takeModule(), std::move(context)};
 }
+void CxxCompileLayer::generatePch(std::string_view code, std::filesystem::path const& outFile) {
+    auto&       compilerInvocation = impl->compilerInstance->getInvocation();
+    auto&       frontendOpts       = compilerInvocation.getFrontendOpts();
+    std::string prevFile           = std::move(frontendOpts.OutputFile);
+    frontendOpts.OutputFile        = ll::string_utils::u8str2str(outFile.u8string());
 
+    auto buffer = llvm::MemoryBuffer::getMemBuffer(code);
+
+    // keep a copy of the current program action:
+    auto prevAction            = frontendOpts.ProgramAction;
+    frontendOpts.ProgramAction = clang::frontend::GeneratePCH;
+
+    frontendOpts.Inputs.clear();
+    frontendOpts.Inputs.push_back(clang::FrontendInputFile{*buffer, clang::Language::CXX});
+
+    auto action = clang::GeneratePCHAction{};
+
+    if (!impl->compilerInstance->ExecuteAction(action)) {
+        std::terminate();
+    }
+    // Restore the previous values:
+    frontendOpts.OutputFile    = std::move(prevFile);
+    frontendOpts.ProgramAction = prevAction;
+
+    auto& opts              = compilerInvocation.getPreprocessorOpts();
+    opts.ImplicitPCHInclude = ll::string_utils::u8str2str(outFile.u8string());
+}
 } // namespace lcj

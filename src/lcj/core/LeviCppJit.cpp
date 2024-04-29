@@ -1,71 +1,22 @@
 #include "LeviCppJit.h"
 
 #include "lcj/compiler/CxxCompileLayer.h"
-#include "lcj/compiler/ServerSymbolGenerator.h"
+#include "lcj/engine/LazyJitEngine.h"
 #include "lcj/utils/LogOnError.h"
 
-#include <llvm/ExecutionEngine/JITLink/EHFrameSupport.h>
-
-#include <llvm/ExecutionEngine/Orc/LLJIT.h>
-#include <llvm/IR/Function.h>
-#include <llvm/IR/IRBuilder.h>
-#include <llvm/IR/Module.h>
-#include <llvm/Support/Host.h>
 #include <llvm/Support/ManagedStatic.h>
 #include <llvm/Support/TargetSelect.h>
 
-#include <ll/api/base/MsvcPredefine.h>
 #include <ll/api/plugin/NativePlugin.h>
 #include <ll/api/plugin/RegisterHelper.h>
 #include <ll/api/utils/WinUtils.h>
 #include <magic_enum.hpp>
 
 namespace lcj {
-__declspec(noreturn
-) extern "C" void __stdcall CxxThrowException(void* pExceptionObject, _ThrowInfo* pThrowInfo) {
-    LeviCppJit::getInstance()
-        .getLogger()
-        .warn("Exception thrown {} {} {}", _ReturnAddress(), pExceptionObject, (void*)pThrowInfo);
-    // _CxxThrowException(pExceptionObject, pThrowInfo);
-    throw std::runtime_error{"hh"};
-}
-
+void registerTestCommand();
 struct LeviCppJit::Impl {
-    CxxCompileLayer                       cxxCompileLayer;
-    std::unique_ptr<llvm::orc::LLLazyJIT> JitEngine;
-    Impl() {
-        auto ES = std::make_unique<llvm::orc::ExecutionSession>(
-            CheckExcepted(llvm::orc::SelfExecutorProcessControl::Create())
-        );
-        ES->setErrorReporter([](llvm::Error err) {
-            auto l = ll::Logger::lock();
-            LeviCppJit::getInstance().getLogger().error(
-                "[ExecutionSession] {}",
-                llvm::toString(std::move(err))
-            );
-        });
-        auto machineBuilder = CheckExcepted(llvm::orc::JITTargetMachineBuilder::detectHost());
-
-        auto& targetOptions               = machineBuilder.getOptions();
-        targetOptions.EmulatedTLS         = true;
-        targetOptions.ExplicitEmulatedTLS = true;
-        targetOptions.ExceptionModel      = llvm::ExceptionHandling::WinEH;
-
-        JitEngine = CheckExcepted(
-            llvm::orc::LLLazyJITBuilder{}
-                .setJITTargetMachineBuilder(std::move(machineBuilder))
-                .setExecutionSession(std::move(ES))
-                //   .setObjectLinkingLayerCreator([&](llvm::orc::ExecutionSession& ES,
-                //                                     const llvm::Triple&          TT) {
-                //       return std::make_unique<llvm::orc::ObjectLinkingLayer>(
-                //           ES,
-                //           CheckExcepted(llvm::jitlink::InProcessMemoryManager::Create())
-                //       );
-                //   })
-                .setNumCompileThreads(std::thread::hardware_concurrency())
-                .create()
-        );
-    }
+    CxxCompileLayer cxxCompileLayer;
+    LazyJitEngine   jitEngine;
 };
 
 LeviCppJit::LeviCppJit(ll::plugin::NativePlugin& p) : mSelf(p) {}
@@ -82,6 +33,20 @@ bool LeviCppJit::load() {
     llvm::InitializeNativeTargetAsmPrinter();
 
     mImpl = std::make_unique<Impl>();
+
+//     mImpl->cxxCompileLayer.generatePch(
+//         R"(
+// #include <__msvc_all_public_headers.hpp>
+// #define LL_MEMORY_OPERATORS
+// namespace std
+// {
+//     enum class align_val_t : size_t {};
+// }
+// #include "ll/api/memory/MemoryOperators.h" // IWYU pragma: keep
+//     )",
+//         getDataDir() / u8"pch"
+//     );
+
     return true;
 }
 bool LeviCppJit::unload() {
@@ -90,165 +55,45 @@ bool LeviCppJit::unload() {
     return true;
 }
 
+std::string LeviCppJit::simpleEval(std::string_view code) {
+    auto module = mImpl->cxxCompileLayer.compileRaw(
+        std::string(R"(
+#line 1
+// #include <__msvc_all_public_headers.hpp>
+decltype(auto) evalImpl(){
+    )")
+                .append(code.contains("return ") ? "" : "return ")
+                .append(code)
+            + R"(;
+}
+template<auto F>
+std::any evalImpl2() {
+    if constexpr (std::is_void_v<std::invoke_result_t<decltype(F)>>) {
+        F();
+        return {};
+    } else {
+        return F();
+    }
+}
+std::any eval() {
+    return evalImpl2<evalImpl>();
+}
+)",
+        "<eval>"
+    );
+    std::string res;
+    if (module) {
+        auto lib = mImpl->jitEngine.createDylib("<eval>");
+        lib.addModule(std::move(module));
+        lib.initialize();
+        res = lib.lookup<std::any()>("?eval@@YA?AVany@std@@XZ")().type().name();
+        lib.deinitialize();
+    }
+    return res;
+}
+
 bool LeviCppJit::enable() {
-    auto tmodule = mImpl->cxxCompileLayer.compileRaw(R"(
-
-#define MCAPI  __declspec(dllimport)
-#define MCVAPI  __declspec(dllimport)
-
-#pragma comment(lib, "version.lib")
-
-    #include <iostream>
-// #include "mc/world/level/storage/LevelData.h"
-// #include "mc/world/level/Level.h"
-
-#include <cstdio>
-
-#include "ll/api/service/Bedrock.h"
-
-class LevelData {
-    public:
-    MCAPI std::string const& getLevelName() const;
-};
-
-class Level {
-    public:
-
-    [[nodiscard]] std::string const& getLevelName() const { return getLevelData().getLevelName(); }
-
-    MCVAPI class LevelData& getLevelData();
-    MCVAPI class LevelData const& getLevelData() const;
-};
-
-    // #include "ll/api/Logger.h"
-
-    // ll::Logger logger("RuntimeCpp");
-
-    struct A{
-        // __declspec(dllimport) int hi(int);
-        int hi(int const& a) const {
-        std::cout<<a<<std::endl;
-        // logger.info("{}", a);
-            return a-3;
-        }
-        A(){
-        std::cout<<"hello A"<<std::endl;
-        }
-        ~A(){
-        std::cout<<"bye A"<<std::endl;
-        }
-    };
-     static   A b{};
-    extern "C" {
-    int add1(int x) {
-
-        printf("%s\n", 
-ll::service::getLevel()->getLevelName().c_str());
-     static   A a{};
-
-    try{
-        throw std::runtime_error("runtime_error!");
-    }catch(...){
-        std::cout<<"catched"<<std::endl;
-    }
-
-        return a.hi(x+4);
-    }
-    }
-    )");
-
-    if (!tmodule) {
-        getLogger().error("compile failed");
-        return false;
-    }
-
-    tmodule.withModuleDo([&, this](llvm::Module& module) {
-        for (auto node : module.getNamedMetadata("llvm.linker.options")->operands()) {
-            if (auto tuple = dyn_cast<llvm::MDTuple>(node)) {
-                if (tuple->getNumOperands() == 0) {
-                    continue;
-                }
-                if (auto str = dyn_cast<llvm::MDString>(tuple->getOperand(0).get())) {
-                    auto opt = str->getString();
-                    if (!opt.consume_front("/DEFAULTLIB:")) {
-                        continue;
-                    }
-                    getLogger().info(opt);
-                }
-            }
-        }
-    });
-    auto& lib = CheckExcepted(mImpl->JitEngine->createJITDylib("plugin1"));
-
-    CheckExcepted(mImpl->JitEngine->addIRModule(lib, std::move(tmodule)));
-
-    auto& es = mImpl->JitEngine->getExecutionSession();
-
-    CheckExcepted(lib.define(llvm::orc::absoluteSymbols({
-        {es.intern("_CxxThrowException"),
-         llvm::JITEvaluatedSymbol::fromPointer(
-             CxxThrowException, llvm::JITSymbolFlags::Exported | llvm::JITSymbolFlags::Callable
-         )}
-    })));
-
-    CheckExcepted(lib.define(llvm::orc::absoluteSymbols({
-        {es.intern("__orc_rt_jit_dispatch"),
-         {es.getExecutorProcessControl().getJITDispatchInfo().JITDispatchFunction.getValue(),
-          llvm::JITSymbolFlags::Exported | llvm::JITSymbolFlags::Callable}},
-        {es.intern("__orc_rt_jit_dispatch_ctx"),
-         {es.getExecutorProcessControl().getJITDispatchInfo().JITDispatchContext.getValue(),
-          llvm::JITSymbolFlags::Exported}},
-        {es.intern("__ImageBase"),
-         llvm::JITEvaluatedSymbol::fromPointer(
-             &ll::win_utils::__ImageBase,
-         llvm::JITSymbolFlags::Exported
-         )},
-        {es.intern("__lljit.platform_support_instance"),
-         llvm::JITEvaluatedSymbol::fromPointer(
-             mImpl->JitEngine->getPlatformSupport(),
-         llvm::JITSymbolFlags::Exported
-         )}
-    })));
-    for (auto& str : std::vector<std::string>{
-             (getSelf().getDataDir() / u8R"(library\msvc\vcruntime.lib)").string(),
-             (getSelf().getDataDir() / u8R"(library\ucrt\ucrt.lib)").string(),
-             (getSelf().getDataDir() / u8R"(library\msvc\msvcprt.lib)").string(),
-             (getSelf().getDataDir() / u8R"(library\um\Kernel32.lib)").string(),
-             (getSelf().getDataDir() / u8R"(library\ll\LeviLamina.lib)").string(),
-             (getSelf().getDataDir() / u8R"(library\msvc\clang_rt.builtins-x86_64.lib)").string()
-         }) {
-        auto libSearcher = CheckExcepted(llvm::orc::StaticLibraryDefinitionGenerator::Load(
-            mImpl->JitEngine->getObjLinkingLayer(),
-            str.c_str()
-        ));
-        for (auto& dll : libSearcher->getImportedDynamicLibraries()) {
-            getLogger().info("dll: {}", dll);
-
-            lib.addGenerator(CheckExcepted(llvm::orc::DynamicLibrarySearchGenerator::Load(
-                dll.c_str(),
-                mImpl->JitEngine->getDataLayout().getGlobalPrefix()
-            )));
-        }
-        lib.addGenerator(std::move(libSearcher));
-    }
-    // lib.addGenerator(CheckExcepted(llvm::orc::DynamicLibrarySearchGenerator::GetForCurrentProcess(
-    //     mImpl->JitEngine->getDataLayout().getGlobalPrefix()
-    // )));
-    lib.addGenerator(std::make_unique<ServerSymbolGenerator>());
-
-    lib.addGenerator(llvm::orc::DLLImportDefinitionGenerator::Create(
-        es,
-        cast<llvm::orc::ObjectLinkingLayer>(mImpl->JitEngine->getObjLinkingLayer())
-    ));
-    CheckExcepted(mImpl->JitEngine->initialize(lib));
-
-    auto Add1Addr = CheckExcepted(mImpl->JitEngine->lookup(lib, "add1"));
-
-    getLogger().info("{}", Add1Addr.toPtr<int(int)>()(42));
-
-    CheckExcepted(mImpl->JitEngine->deinitialize(lib));
-    CheckExcepted(es.removeJITDylib(lib));
-
+    registerTestCommand();
     return true;
 }
 
