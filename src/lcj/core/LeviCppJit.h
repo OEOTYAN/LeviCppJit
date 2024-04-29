@@ -19,6 +19,8 @@ public:
 
     [[nodiscard]] ll::plugin::NativePlugin& getSelf() const;
 
+    [[nodiscard]] ll::Logger& getLogger() const { return getSelf().getLogger(); }
+
     bool load();
 
     bool enable();

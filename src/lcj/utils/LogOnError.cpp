@@ -12,13 +12,13 @@ void LogOnError::checkError(llvm::Error Err) {
         auto msg = llvm::toString(std::move(Err));
         if (auto size = msg.size(); size > maxSize) {
             msg.resize(maxSize);
-            LeviCppJit::getInstance().getSelf().getLogger().fatal(
+            LeviCppJit::getInstance().getLogger().fatal(
                 "{}..., left {} characters",
                 msg,
                 size - maxSize
             );
         } else {
-            LeviCppJit::getInstance().getSelf().getLogger().fatal(msg);
+            LeviCppJit::getInstance().getLogger().fatal(msg);
         }
         throw std::runtime_error("error in llvm");
     }

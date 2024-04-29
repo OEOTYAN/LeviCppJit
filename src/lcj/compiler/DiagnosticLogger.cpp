@@ -15,7 +15,7 @@ void DiagnosticLogger::HandleDiagnostic(
         s += file.printToString(file.getManager()) + ": ";
     }
 
-    auto& logger = LeviCppJit::getInstance().getSelf().getLogger();
+    auto& logger = LeviCppJit::getInstance().getLogger();
 
     switch (DiagLevel) {
     case clang::DiagnosticsEngine::Level::Ignored:

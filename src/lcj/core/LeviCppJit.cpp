@@ -11,17 +11,24 @@
 #include <llvm/IR/IRBuilder.h>
 #include <llvm/IR/Module.h>
 #include <llvm/Support/Host.h>
-#include <llvm/Support/TargetSelect.h>
 #include <llvm/Support/ManagedStatic.h>
+#include <llvm/Support/TargetSelect.h>
 
+#include <ll/api/base/MsvcPredefine.h>
 #include <ll/api/plugin/NativePlugin.h>
 #include <ll/api/plugin/RegisterHelper.h>
 #include <ll/api/utils/WinUtils.h>
 #include <magic_enum.hpp>
 
-extern "C" void* __stdcall LoadLibraryA(char const* lpLibFileName);
-
 namespace lcj {
+__declspec(noreturn
+) extern "C" void __stdcall CxxThrowException(void* pExceptionObject, _ThrowInfo* pThrowInfo) {
+    LeviCppJit::getInstance()
+        .getLogger()
+        .warn("Exception thrown {} {} {}", _ReturnAddress(), pExceptionObject, (void*)pThrowInfo);
+    // _CxxThrowException(pExceptionObject, pThrowInfo);
+    throw std::runtime_error{"hh"};
+}
 
 struct LeviCppJit::Impl {
     CxxCompileLayer                       cxxCompileLayer;
@@ -32,7 +39,7 @@ struct LeviCppJit::Impl {
         );
         ES->setErrorReporter([](llvm::Error err) {
             auto l = ll::Logger::lock();
-            LeviCppJit::getInstance().getSelf().getLogger().error(
+            LeviCppJit::getInstance().getLogger().error(
                 "[ExecutionSession] {}",
                 llvm::toString(std::move(err))
             );
@@ -44,11 +51,20 @@ struct LeviCppJit::Impl {
         targetOptions.ExplicitEmulatedTLS = true;
         targetOptions.ExceptionModel      = llvm::ExceptionHandling::WinEH;
 
-        JitEngine = CheckExcepted(llvm::orc::LLLazyJITBuilder{}
-                                      .setJITTargetMachineBuilder(std::move(machineBuilder))
-                                      .setExecutionSession(std::move(ES))
-                                      .setNumCompileThreads(std::thread::hardware_concurrency())
-                                      .create());
+        JitEngine = CheckExcepted(
+            llvm::orc::LLLazyJITBuilder{}
+                .setJITTargetMachineBuilder(std::move(machineBuilder))
+                .setExecutionSession(std::move(ES))
+                //   .setObjectLinkingLayerCreator([&](llvm::orc::ExecutionSession& ES,
+                //                                     const llvm::Triple&          TT) {
+                //       return std::make_unique<llvm::orc::ObjectLinkingLayer>(
+                //           ES,
+                //           CheckExcepted(llvm::jitlink::InProcessMemoryManager::Create())
+                //       );
+                //   })
+                .setNumCompileThreads(std::thread::hardware_concurrency())
+                .create()
+        );
     }
 };
 
@@ -129,13 +145,20 @@ class Level {
         printf("%s\n", 
 ll::service::getLevel()->getLevelName().c_str());
      static   A a{};
+
+    try{
+        throw std::runtime_error("runtime_error!");
+    }catch(...){
+        std::cout<<"catched"<<std::endl;
+    }
+
         return a.hi(x+4);
     }
     }
     )");
 
     if (!tmodule) {
-        getSelf().getLogger().error("compile failed");
+        getLogger().error("compile failed");
         return false;
     }
 
@@ -150,7 +173,7 @@ ll::service::getLevel()->getLevelName().c_str());
                     if (!opt.consume_front("/DEFAULTLIB:")) {
                         continue;
                     }
-                    getSelf().getLogger().info(opt);
+                    getLogger().info(opt);
                 }
             }
         }
@@ -162,21 +185,28 @@ ll::service::getLevel()->getLevelName().c_str());
     auto& es = mImpl->JitEngine->getExecutionSession();
 
     CheckExcepted(lib.define(llvm::orc::absoluteSymbols({
+        {es.intern("_CxxThrowException"),
+         llvm::JITEvaluatedSymbol::fromPointer(
+             CxxThrowException, llvm::JITSymbolFlags::Exported | llvm::JITSymbolFlags::Callable
+         )}
+    })));
+
+    CheckExcepted(lib.define(llvm::orc::absoluteSymbols({
         {es.intern("__orc_rt_jit_dispatch"),
          {es.getExecutorProcessControl().getJITDispatchInfo().JITDispatchFunction.getValue(),
-          llvm::JITSymbolFlags::Weak}},
+          llvm::JITSymbolFlags::Exported | llvm::JITSymbolFlags::Callable}},
         {es.intern("__orc_rt_jit_dispatch_ctx"),
          {es.getExecutorProcessControl().getJITDispatchInfo().JITDispatchContext.getValue(),
-          llvm::JITSymbolFlags::Weak}},
+          llvm::JITSymbolFlags::Exported}},
         {es.intern("__ImageBase"),
          llvm::JITEvaluatedSymbol::fromPointer(
              &ll::win_utils::__ImageBase,
-         llvm::JITSymbolFlags::Weak
+         llvm::JITSymbolFlags::Exported
          )},
         {es.intern("__lljit.platform_support_instance"),
          llvm::JITEvaluatedSymbol::fromPointer(
              mImpl->JitEngine->getPlatformSupport(),
-         llvm::JITSymbolFlags::Weak
+         llvm::JITSymbolFlags::Exported
          )}
     })));
     for (auto& str : std::vector<std::string>{
@@ -192,7 +222,7 @@ ll::service::getLevel()->getLevelName().c_str());
             str.c_str()
         ));
         for (auto& dll : libSearcher->getImportedDynamicLibraries()) {
-            getSelf().getLogger().info("dll: {}", dll);
+            getLogger().info("dll: {}", dll);
 
             lib.addGenerator(CheckExcepted(llvm::orc::DynamicLibrarySearchGenerator::Load(
                 dll.c_str(),
@@ -214,7 +244,7 @@ ll::service::getLevel()->getLevelName().c_str());
 
     auto Add1Addr = CheckExcepted(mImpl->JitEngine->lookup(lib, "add1"));
 
-    getSelf().getLogger().info("{}", Add1Addr.toPtr<int(int)>()(42));
+    getLogger().info("{}", Add1Addr.toPtr<int(int)>()(42));
 
     CheckExcepted(mImpl->JitEngine->deinitialize(lib));
     CheckExcepted(es.removeJITDylib(lib));

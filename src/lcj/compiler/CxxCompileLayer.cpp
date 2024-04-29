@@ -136,9 +136,29 @@ CxxCompileLayer::~CxxCompileLayer() = default;
 
 
 llvm::orc::ThreadSafeModule CxxCompileLayer::compileRaw(std::string_view code) {
+    // EmulatedTLS
     std::string codeBuffer{R"(
 extern "C" {
-    __declspec(thread) int _Init_thread_epoch = (-2147483647i32 - 1);
+void                 Sleep(unsigned long dwMilliseconds);
+inline unsigned int           _tls_index         = 0;
+inline int                    _Init_global_epoch = (-2147483647i32 - 1);
+inline __declspec(thread) int _Init_thread_epoch = (-2147483647i32 - 1);
+
+inline void _Init_thread_header(volatile int* ptss) {
+    while (true) {
+        if (_InterlockedCompareExchange(reinterpret_cast<volatile long*>(ptss), -1, 0) == -1) {
+            Sleep(0);
+            continue;
+        }
+        break;
+    }
+}
+inline void _Init_thread_footer(int* ptss) {
+    *ptss = _InterlockedIncrement(reinterpret_cast<long*>(&_Init_global_epoch));
+}
+inline void _Init_thread_abort(volatile int* ptss) {
+    _InterlockedAnd(reinterpret_cast<volatile long*>(ptss), 0);
+}
 }
 )"};
     codeBuffer  += code;

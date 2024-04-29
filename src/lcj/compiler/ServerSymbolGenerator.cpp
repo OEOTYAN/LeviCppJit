@@ -24,7 +24,7 @@ llvm::Error ServerSymbolGenerator::tryToGenerate(
 
         name.remove_prefix(hasGlobalPrefix);
 
-        LeviCppJit::getInstance().getSelf().getLogger().debug("resolveSymbol: {}", name);
+        LeviCppJit::getInstance().getLogger().debug("resolveSymbol: {}", name);
 
         if (void* addr = ll::memory::resolveSymbol(name, true))
             newSymbols[KV.first] = llvm::JITEvaluatedSymbol{
