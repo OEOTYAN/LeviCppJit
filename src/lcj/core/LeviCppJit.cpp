@@ -34,18 +34,18 @@ bool LeviCppJit::load() {
 
     mImpl = std::make_unique<Impl>();
 
-//     mImpl->cxxCompileLayer.generatePch(
-//         R"(
-// #include <__msvc_all_public_headers.hpp>
-// #define LL_MEMORY_OPERATORS
-// namespace std
-// {
-//     enum class align_val_t : size_t {};
-// }
-// #include "ll/api/memory/MemoryOperators.h" // IWYU pragma: keep
-//     )",
-//         getDataDir() / u8"pch"
-//     );
+    mImpl->cxxCompileLayer.generatePch(
+        R"(
+#include <__msvc_all_public_headers.hpp>
+#define LL_MEMORY_OPERATORS
+namespace std
+{
+    enum class align_val_t : size_t {};
+}
+#include "ll/api/memory/MemoryOperators.h" // IWYU pragma: keep
+    )",
+        getDataDir() / u8"pch"
+    );
 
     return true;
 }
@@ -59,7 +59,6 @@ std::string LeviCppJit::simpleEval(std::string_view code) {
     auto module = mImpl->cxxCompileLayer.compileRaw(
         std::string(R"(
 #line 1
-// #include <__msvc_all_public_headers.hpp>
 decltype(auto) evalImpl(){
     )")
                 .append(code.contains("return ") ? "" : "return ")
